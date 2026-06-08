@@ -12,6 +12,12 @@ app = FastAPI(
     version="0.3.0"
 )
 
+
+@app.get("/health", tags=["meta"])
+def health():
+    return {"status": "ok", "version": "0.3.0"}
+
+
 app.include_router(stewards.router, prefix="/stewards", tags=["stewards"])
 app.include_router(pulses.router, prefix="/pulses", tags=["pulses"])
 app.include_router(checkpoint_router, prefix="/checkpoint", tags=["checkpoint"])
