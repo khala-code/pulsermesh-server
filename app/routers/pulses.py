@@ -1,31 +1,43 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.auth import require_api_key
+from app.auth import require_steward_key, require_api_key
 from app.database import get_db
 from app.models.pulse import Pulse
 from app.models.steward import Steward
+from app.models.identity import OaZaTaIdentity
 from app.schemas.pulse import PulseCreate, PulseResponse
 from app.services.trust import calculate_trust_delta
 from datetime import datetime
 
 router = APIRouter()
 
+
 @router.post("/submit", response_model=PulseResponse)
 def submit_pulse(
-    steward_id: str,
     body: PulseCreate,
     db: Session = Depends(get_db),
-    api_key: str = Depends(require_api_key)
+    identity: OaZaTaIdentity = Depends(require_steward_key)
 ):
-    """Submit a value-add pulse from a T2 steward."""
-    steward = db.query(Steward).filter(Steward.id == steward_id).first()
+    """
+    Submit a value-add pulse. Auth is steward-scoped — the steward
+    is resolved from their OaZaTa API key, no need to pass steward_id.
+
+    Node admin key also accepted (returns 400 if no steward context).
+    """
+    if identity is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Use a steward API key to submit pulses, not the node key"
+        )
+
+    steward = db.query(Steward).filter(Steward.id == identity.steward_id).first()
     if not steward:
         raise HTTPException(status_code=404, detail="Steward not found")
 
     pulse = Pulse(
         id=str(uuid.uuid4()),
-        steward_id=steward_id,
+        steward_id=steward.id,
         scarcity_domain=body.scarcity_domain,
         description=body.description,
         value_add=body.value_add,
@@ -36,13 +48,17 @@ def submit_pulse(
     db.refresh(pulse)
     return pulse
 
+
 @router.post("/{pulse_id}/validate", response_model=PulseResponse)
 def validate_pulse(
     pulse_id: str,
     db: Session = Depends(get_db),
-    api_key: str = Depends(require_api_key)
+    api_key: str = Depends(require_api_key)  # node-level only
 ):
-    """Validate a pending pulse and accrue trust-resource to the steward."""
+    """
+    Validate a pending pulse. Node-level operation only —
+    T3 node operator confirms the value-add and accrues trust-resource.
+    """
     pulse = db.query(Pulse).filter(Pulse.id == pulse_id).first()
     if not pulse:
         raise HTTPException(status_code=404, detail="Pulse not found")
@@ -59,6 +75,19 @@ def validate_pulse(
     db.commit()
     db.refresh(pulse)
     return pulse
+
+
+@router.get("/mine", response_model=list[PulseResponse])
+def get_my_pulses(
+    db: Session = Depends(get_db),
+    identity: OaZaTaIdentity = Depends(require_steward_key)
+):
+    """Return all pulses submitted by the authenticated steward."""
+    if identity is None:
+        raise HTTPException(status_code=400, detail="Use a steward API key")
+    pulses = db.query(Pulse).filter(Pulse.steward_id == identity.steward_id).all()
+    return pulses
+
 
 @router.get("/{pulse_id}", response_model=PulseResponse)
 def get_pulse(
