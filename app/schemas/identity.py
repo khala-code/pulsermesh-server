@@ -9,6 +9,11 @@ class OaZaTaPosition(BaseModel):
     ta: float
 
 
+class StewardCreateWithPosition(BaseModel):
+    name: str
+    position: OaZaTaPosition
+
+
 class IdentityResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
