@@ -11,8 +11,8 @@ class StewardResponse(BaseModel):
     id: str
     name: str
     trust_resource: float
+    coherence_score: float
     created_at: datetime
-    # api_key_hash surfaced so the registering admin can pass it to the steward
     api_key_hash: Optional[str] = None
 
     class Config:
