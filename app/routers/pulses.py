@@ -8,10 +8,13 @@ from app.models.steward import Steward
 from app.models.identity import OaZaTaIdentity
 from app.schemas.pulse import PulseCreate, PulseResponse
 from app.services.trust import calculate_trust_delta
+from app.services.checkpoint import get_current_checkpoint
 from app.config import settings
 from datetime import datetime, UTC
 
 router = APIRouter()
+
+DECAY_HALF_LIFE = 4.0  # checkpoints
 
 
 @router.post("/submit", response_model=PulseResponse)
@@ -27,12 +30,16 @@ def submit_pulse(
     if not steward:
         raise HTTPException(status_code=404, detail="Steward not found")
 
+    # Record the checkpoint index at submission time so decay is measurable at validation
+    current_cp = get_current_checkpoint(db)
+
     pulse = Pulse(
         id=str(uuid.uuid4()),
         steward_id=steward.id,
         scarcity_domain=body.scarcity_domain,
         description=body.description,
         value_add=body.value_add,
+        submitted_at_checkpoint=current_cp.index,
         status="pending"
     )
     db.add(pulse)
@@ -55,11 +62,17 @@ def validate_pulse(
 
     steward = db.query(Steward).filter(Steward.id == pulse.steward_id).first()
 
-    # T_scarcity transform — domain weight applied at validation time
+    # Checkpoint age = how many checkpoints elapsed since submission
+    current_cp = get_current_checkpoint(db)
+    submitted_at = pulse.submitted_at_checkpoint or current_cp.index
+    checkpoint_age = max(0, current_cp.index - submitted_at)
+
     delta = calculate_trust_delta(
         value_add=pulse.value_add,
         scarcity_domain=pulse.scarcity_domain,
-        scarcity_weights=settings.scarcity_weights()
+        scarcity_weights=settings.scarcity_weights(),
+        checkpoint_age=checkpoint_age,
+        decay_half_life=DECAY_HALF_LIFE
     )
     steward.trust_resource += delta
 

@@ -17,5 +17,6 @@ class PulseResponse(BaseModel):
     scarcity_domain: str
     description: str
     value_add: float
+    submitted_at_checkpoint: Optional[int] = None
     status: str
     validated_at: Optional[datetime] = None
