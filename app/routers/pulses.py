@@ -8,7 +8,8 @@ from app.models.steward import Steward
 from app.models.identity import OaZaTaIdentity
 from app.schemas.pulse import PulseCreate, PulseResponse
 from app.services.trust import calculate_trust_delta
-from datetime import datetime
+from app.config import settings
+from datetime import datetime, UTC
 
 router = APIRouter()
 
@@ -19,17 +20,8 @@ def submit_pulse(
     db: Session = Depends(get_db),
     identity: OaZaTaIdentity = Depends(require_steward_key)
 ):
-    """
-    Submit a value-add pulse. Auth is steward-scoped — the steward
-    is resolved from their OaZaTa API key, no need to pass steward_id.
-
-    Node admin key also accepted (returns 400 if no steward context).
-    """
     if identity is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Use a steward API key to submit pulses, not the node key"
-        )
+        raise HTTPException(status_code=400, detail="Use a steward API key to submit pulses")
 
     steward = db.query(Steward).filter(Steward.id == identity.steward_id).first()
     if not steward:
@@ -53,12 +45,8 @@ def submit_pulse(
 def validate_pulse(
     pulse_id: str,
     db: Session = Depends(get_db),
-    api_key: str = Depends(require_api_key)  # node-level only
+    api_key: str = Depends(require_api_key)
 ):
-    """
-    Validate a pending pulse. Node-level operation only —
-    T3 node operator confirms the value-add and accrues trust-resource.
-    """
     pulse = db.query(Pulse).filter(Pulse.id == pulse_id).first()
     if not pulse:
         raise HTTPException(status_code=404, detail="Pulse not found")
@@ -66,11 +54,17 @@ def validate_pulse(
         raise HTTPException(status_code=400, detail="Pulse already processed")
 
     steward = db.query(Steward).filter(Steward.id == pulse.steward_id).first()
-    delta = calculate_trust_delta(pulse.value_add)
+
+    # T_scarcity transform — domain weight applied at validation time
+    delta = calculate_trust_delta(
+        value_add=pulse.value_add,
+        scarcity_domain=pulse.scarcity_domain,
+        scarcity_weights=settings.scarcity_weights()
+    )
     steward.trust_resource += delta
 
     pulse.status = "validated"
-    pulse.validated_at = datetime.utcnow()
+    pulse.validated_at = datetime.now(UTC)
 
     db.commit()
     db.refresh(pulse)
@@ -82,11 +76,9 @@ def get_my_pulses(
     db: Session = Depends(get_db),
     identity: OaZaTaIdentity = Depends(require_steward_key)
 ):
-    """Return all pulses submitted by the authenticated steward."""
     if identity is None:
         raise HTTPException(status_code=400, detail="Use a steward API key")
-    pulses = db.query(Pulse).filter(Pulse.steward_id == identity.steward_id).all()
-    return pulses
+    return db.query(Pulse).filter(Pulse.steward_id == identity.steward_id).all()
 
 
 @router.get("/{pulse_id}", response_model=PulseResponse)
