@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
     pass
 
 def init_db():
-    from app.models import node, steward, pulse  # noqa: F401
+    from app.models import node, steward, pulse, identity  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
 def get_db():
