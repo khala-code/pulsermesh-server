@@ -1,69 +1,28 @@
-"""OaZaTa identity issuance and validation."""
-import uuid
-import math
+import hashlib
 from sqlalchemy.orm import Session
 from app.models.identity import OaZaTaIdentity
-from app.models.steward import Steward
+from app.services.checkpoint import get_valid_keys_for_steward
 
 
-def issue_identity(
-    db: Session,
-    steward: Steward,
-    oa: int = 0,
-    za: float = 0.0,
-    ta: float = 1.0,
-    checkpoint_hash: str = "genesis"
-) -> OaZaTaIdentity:
+def validate_api_key(db: Session, api_key: str):
     """
-    Issue an OaZaTa identity for a steward at registration.
+    Validate a steward's pm_ key against all currently-valid checkpoint projections.
 
-    v1: assigns a position and derives an API key from it.
-    v2: position will be validated against the T3 reference wave
-        before issuance — the steward must first pass the vibe check.
+    Iterates all active identities and checks the submitted key against the
+    grace window of valid keys for each steward's frozen OaZaTa position.
+
+    This is O(n_stewards) — fine for experimental phase.
+    v2: index by checkpoint-keyed bloom filter.
     """
-    api_key = OaZaTaIdentity.derive_api_key(
-        steward_id=steward.id,
-        oa=oa,
-        za=za,
-        ta=ta,
-        checkpoint=checkpoint_hash
-    )
-
-    identity = OaZaTaIdentity(
-        id=str(uuid.uuid4()),
-        steward_id=steward.id,
-        oa=oa,
-        za=za,
-        ta=ta,
-        checkpoint_hash=checkpoint_hash,
-        api_key=api_key
-    )
-    db.add(identity)
-    db.commit()
-    db.refresh(identity)
-    return identity
-
-
-def get_identity_by_steward(db: Session, steward_id: str) -> OaZaTaIdentity | None:
-    return db.query(OaZaTaIdentity).filter(
-        OaZaTaIdentity.steward_id == steward_id
-    ).first()
-
-
-def validate_api_key(db: Session, api_key: str) -> OaZaTaIdentity | None:
-    """
-    v1: lookup identity by derived API key.
-    v2: this becomes interference pattern constructive/destructive check.
-    """
-    return db.query(OaZaTaIdentity).filter(
-        OaZaTaIdentity.api_key == api_key
-    ).first()
-
-
-def is_at_tan_pole(za: float, threshold: float = 1e-4) -> bool:
-    """
-    Check if Za is near a tangent pole (π/2 + nπ).
-    Poles are structurally significant — approaching consent boundary.
-    v2: pole proximity will be a signal in the vibe check, not just a guard.
-    """
-    return abs(math.cos(za)) < threshold
+    identities = db.query(OaZaTaIdentity).all()
+    for identity in identities:
+        valid_keys = get_valid_keys_for_steward(
+            steward_id=identity.steward_id,
+            oa=identity.oa,
+            za=identity.za,
+            ta=identity.ta,
+            db=db
+        )
+        if api_key in valid_keys:
+            return identity
+    return None

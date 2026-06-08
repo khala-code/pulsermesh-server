@@ -1,18 +1,17 @@
 from fastapi import FastAPI
-from app.routers import node, stewards, pulses, health
-from app.database import init_db
+from app.database import engine, Base
+from app.routers import stewards, pulses
+from app.routers.checkpoint import router as checkpoint_router
+from app.models import steward, pulse, identity, checkpoint as checkpoint_model
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="Pulser Mesh T3 Node",
-    description="Reference T3 node server for the Pulser Mesh protocol.",
-    version="0.1.0",
+    title="Pulser Mesh T3",
+    description="Trust-resource mesh node. OaZaTa-scoped steward auth with checkpoint-anchored key rotation.",
+    version="0.3.0"
 )
 
-@app.on_event("startup")
-async def startup():
-    init_db()
-
-app.include_router(health.router)
-app.include_router(node.router, prefix="/node", tags=["node"])
 app.include_router(stewards.router, prefix="/stewards", tags=["stewards"])
 app.include_router(pulses.router, prefix="/pulses", tags=["pulses"])
+app.include_router(checkpoint_router, prefix="/checkpoint", tags=["checkpoint"])
