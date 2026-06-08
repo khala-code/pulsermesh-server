@@ -2,11 +2,9 @@ from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
 from typing import Dict
 import uuid
+import math
 
 
-# Default scarcity weights for known domains.
-# Override per-node via SCARCITY_WEIGHTS env var (JSON) or node_config.yaml.
-# These are the T_scarcity diagonal entries — the innermost transform.
 DEFAULT_SCARCITY_WEIGHTS: Dict[str, float] = {
     "water":   1.8,
     "food":    1.5,
@@ -23,7 +21,15 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./pulsermesh.db"
     node_id: str = str(uuid.uuid4())
 
-    # JSON string override: '{"water": 2.0, "default": 1.0}'
+    # Node's reference OaZaTa position on the mesh.
+    # Za is the critical value — it defines the node's phase reference.
+    # Steward proximity is computed relative to this.
+    # Default: Oa=1.0 (unit thickness), Za=0.0 (reference phase), Ta=0.0 (origin)
+    node_oa: float = 1.0
+    node_za: float = 0.0
+    node_ta: float = 0.0
+
+    # JSON string override for scarcity weights
     scarcity_weights_json: str = ""
 
     def scarcity_weights(self) -> Dict[str, float]:

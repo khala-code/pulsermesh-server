@@ -7,7 +7,7 @@ from app.models.pulse import Pulse
 from app.models.steward import Steward
 from app.models.identity import OaZaTaIdentity
 from app.schemas.pulse import PulseCreate, PulseResponse
-from app.services.trust import calculate_trust_delta
+from app.services.trust import calculate_trust_delta, _t_proximity
 from app.services.checkpoint import get_current_checkpoint
 from app.config import settings
 from datetime import datetime, UTC
@@ -15,6 +15,11 @@ from datetime import datetime, UTC
 router = APIRouter()
 
 DECAY_HALF_LIFE = 4.0  # checkpoints
+
+# Pulses with proximity below this threshold are rejected at validation.
+# 0.0 = orthogonal spirals produce no trust (neither constructive nor destructive)
+# Set to a negative value to allow partial destructive interference through.
+PROXIMITY_THRESHOLD = 0.0
 
 
 @router.post("/submit", response_model=PulseResponse)
@@ -30,7 +35,6 @@ def submit_pulse(
     if not steward:
         raise HTTPException(status_code=404, detail="Steward not found")
 
-    # Record the checkpoint index at submission time so decay is measurable at validation
     current_cp = get_current_checkpoint(db)
 
     pulse = Pulse(
@@ -61,8 +65,22 @@ def validate_pulse(
         raise HTTPException(status_code=400, detail="Pulse already processed")
 
     steward = db.query(Steward).filter(Steward.id == pulse.steward_id).first()
+    identity = db.query(OaZaTaIdentity).filter(
+        OaZaTaIdentity.steward_id == pulse.steward_id
+    ).first()
 
-    # Checkpoint age = how many checkpoints elapsed since submission
+    # Proximity check — reject pulses from destructive/orthogonal spirals
+    proximity = _t_proximity(
+        oa=identity.oa if identity else 1.0,
+        za_steward=identity.za if identity else 0.0,
+        za_node=settings.node_za
+    )
+    if proximity <= PROXIMITY_THRESHOLD:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Pulse rejected — spiral interference destructive (proximity={proximity:.4f})"
+        )
+
     current_cp = get_current_checkpoint(db)
     submitted_at = pulse.submitted_at_checkpoint or current_cp.index
     checkpoint_age = max(0, current_cp.index - submitted_at)
@@ -72,7 +90,10 @@ def validate_pulse(
         scarcity_domain=pulse.scarcity_domain,
         scarcity_weights=settings.scarcity_weights(),
         checkpoint_age=checkpoint_age,
-        decay_half_life=DECAY_HALF_LIFE
+        decay_half_life=DECAY_HALF_LIFE,
+        steward_oa=identity.oa if identity else 1.0,
+        steward_za=identity.za if identity else 0.0,
+        node_za=settings.node_za
     )
     steward.trust_resource += delta
 
