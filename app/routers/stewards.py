@@ -7,6 +7,7 @@ from app.models.steward import Steward
 from app.schemas.identity import StewardCreateWithPosition, OaZaTaPosition
 from app.schemas.steward import StewardResponse
 from app.services.identity import issue_identity, get_identity_by_steward
+from app.services.domain import resolve_mission_vector
 
 router = APIRouter()
 
@@ -20,18 +21,23 @@ def register_steward(
     """
     Register a new T2 steward and issue their OaZaTa identity.
 
-    If no position is provided, the steward is placed at the origin
-    (Oa=0, Za=0, Ta=1) — the default entry point into the domain.
+    If `domains` is provided, the steward's declared domain cluster is
+    resolved into a mission_vector_za via the node's DomainVector table
+    and stored on the identity. This is the steward's declared direction
+    of travel in the geometric field.
+
+    If no position is provided, the steward is placed at
+    (Oa=1.0, Za=0.0, Ta=0.0) — the default entry point.
     """
     steward_id = str(uuid.uuid4())
     steward = Steward(
         id=steward_id,
         name=body.name,
-        api_key_hash="",  # replaced by OaZaTa identity
+        api_key_hash="",
         trust_resource=0.0
     )
     db.add(steward)
-    db.flush()  # get the ID without committing
+    db.flush()
 
     pos = body.position or OaZaTaPosition()
     identity = issue_identity(
@@ -42,7 +48,15 @@ def register_steward(
         ta=pos.ta,
     )
 
-    # Store the issued API key hash back on the steward for quick lookup
+    # Resolve mission vector from declared domains if provided
+    if body.domains:
+        identity.mission_vector_za = resolve_mission_vector(
+            db=db,
+            domains=body.domains,
+            domain_weights=body.domain_weights,
+        )
+        db.add(identity)
+
     steward.api_key_hash = identity.api_key
     db.commit()
     db.refresh(steward)
@@ -68,7 +82,7 @@ def get_steward_identity(
     api_key: str = Depends(require_api_key)
 ):
     """
-    Return the OaZaTa identity and current rotor phase for a steward.
+    Return the OaZaTa identity and snark fields for a steward.
     """
     identity = get_identity_by_steward(db, steward_id)
     if not identity:
@@ -79,8 +93,10 @@ def get_steward_identity(
         "oa": identity.oa,
         "za": identity.za,
         "ta": identity.ta,
-        "checkpoint_hash": identity.checkpoint_hash,
-        "api_key": identity.api_key,
-        "rotor_phase": identity.rotor_phase,
+        "api_key_hash": identity.api_key_hash,
+        "mission_vector_za": identity.mission_vector_za,
+        "null_centroid_za": identity.null_centroid_za,
+        "mission_delta": identity.mission_delta,
+        "pulse_count": identity.pulse_count,
         "created_at": identity.created_at,
     }
