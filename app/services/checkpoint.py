@@ -1,9 +1,12 @@
+import logging
 from datetime import datetime, UTC
 from sqlalchemy.orm import Session
 from app.models.checkpoint import Checkpoint
+from app.models.identity import OaZaTaIdentity
 from app.config import settings
 from app.services.crypto import digest, keyed_digest
 
+log = logging.getLogger(__name__)
 
 GENESIS_HASH = "0" * 64
 
@@ -16,6 +19,15 @@ def get_current_checkpoint(db: Session) -> Checkpoint:
 
 
 def advance_checkpoint(db: Session, ta_ref: float) -> Checkpoint:
+    """
+    Advance the mesh clock by one checkpoint.
+
+    After committing the new Checkpoint row, calls
+    snark.update_snark_identity() for every steward that has an
+    OaZaTaIdentity. Snark failures are logged and skipped — a
+    centroid recomputation error must never prevent the checkpoint
+    from advancing.
+    """
     current = get_current_checkpoint(db)
     new_index = current.index + 1
     new_hash = _derive_checkpoint_hash(
@@ -34,7 +46,44 @@ def advance_checkpoint(db: Session, ta_ref: float) -> Checkpoint:
     db.add(cp)
     db.commit()
     db.refresh(cp)
+
+    _run_snark_updates(db)
+
     return cp
+
+
+def _run_snark_updates(db: Session) -> None:
+    """
+    Recompute snark fields for every steward with an identity.
+
+    Imported inside the function to avoid a circular import:
+    snark → asymptotic → (no further deps), but if checkpoint were
+    imported at module level by snark in the future, it would cycle.
+    """
+    from app.services import snark  # deferred import
+
+    identities = db.query(OaZaTaIdentity).all()
+    for identity in identities:
+        try:
+            update = snark.update_snark_identity(
+                db=db,
+                steward_id=identity.steward_id,
+                identity=identity,
+            )
+            log.debug(
+                "snark updated steward=%s pulse_count=%d "
+                "null_centroid_za=%s mission_delta=%s uncertainty_radius=%.4f",
+                update.steward_id,
+                update.pulse_count,
+                f"{update.null_centroid_za:.4f}" if update.null_centroid_za is not None else "None",
+                f"{update.mission_delta:.4f}" if update.mission_delta is not None else "None",
+                update.uncertainty_radius,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "snark update failed for steward=%s: %s",
+                identity.steward_id, exc,
+            )
 
 
 def derive_steward_key(steward_id: str, oa: float, za: float, ta: float, checkpoint_hash: str) -> str:
