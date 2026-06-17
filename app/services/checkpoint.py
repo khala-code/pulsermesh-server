@@ -1,8 +1,8 @@
-import hashlib
 from datetime import datetime, UTC
 from sqlalchemy.orm import Session
 from app.models.checkpoint import Checkpoint
 from app.config import settings
+from app.services.crypto import digest, keyed_digest
 
 
 GENESIS_HASH = "0" * 64
@@ -38,9 +38,16 @@ def advance_checkpoint(db: Session, ta_ref: float) -> Checkpoint:
 
 
 def derive_steward_key(steward_id: str, oa: float, za: float, ta: float, checkpoint_hash: str) -> str:
-    raw = f"{steward_id}|{oa}|{za}|{ta}|{checkpoint_hash}|{settings.api_key_secret}"
-    digest = hashlib.sha256(raw.encode()).hexdigest()
-    return f"pm_{digest}"
+    """
+    Derive a steward's pm_ key from their rotor phase + checkpoint hash.
+
+    Routed through crypto.keyed_digest so the underlying primitive is
+    swappable without touching this call site.
+    See docs/architecture.md § Principle 7.
+    """
+    raw = f"{steward_id}|{oa}|{za}|{ta}|{checkpoint_hash}"
+    h = keyed_digest(raw, settings.api_key_secret)
+    return f"pm_{h}"
 
 
 def get_valid_keys_for_steward(
@@ -84,5 +91,11 @@ def _create_genesis(db: Session) -> Checkpoint:
 
 
 def _derive_checkpoint_hash(index: int, node_id: str, prev_hash: str, ta_ref: float) -> str:
+    """
+    Structural hash of a checkpoint.
+
+    Routed through crypto.digest so the primitive is swappable.
+    See docs/architecture.md § Principle 7.
+    """
     raw = f"{index}|{node_id}|{prev_hash}|{ta_ref}"
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return digest(raw)
