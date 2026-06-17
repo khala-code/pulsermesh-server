@@ -2,24 +2,23 @@ import math
 from sqlalchemy.orm import Session
 from app.models.steward import Steward
 from app.models.identity import OaZaTaIdentity
+from app.services.asymptotic import coherence_score
 
-# Minimum triangulations before coherence_score is meaningful
-MIN_TRIANGULATIONS = 3
+# Minimum validated pulses before coherence_score is meaningful.
+MIN_PULSES = 3
 
 
-def update_coherence(db: Session, steward_id: str) -> float:
+def update_coherence(db: Session, steward_id: str, za_node: float = 0.0) -> float:
     """
     Recompute and persist coherence_score for a steward.
 
-    Coherence = 1 / (1 + position_variance)
-    - variance=0.0  → coherence=1.0  (perfect spiral stability)
-    - variance=inf  → coherence=0.0  (fully incoherent)
+    coherence_s = cos(ΔZa)  (docs/asymptotic-auth.md § 5)
 
-    Returns 0.0 if fewer than MIN_TRIANGULATIONS have been performed.
+    Returns 0.0 if fewer than MIN_PULSES have been validated.
 
-    This is a stub — position_variance is currently set externally by
-    the matrix service. This function just translates it into the
-    [0,1] coherence score and writes it to the steward record.
+    za_node  — the node's current Za reference; defaults to 0.0.
+               Callers should pass the live node Za from the Node
+               record once the node PLL is wired up.
     """
     identity = db.query(OaZaTaIdentity).filter(
         OaZaTaIdentity.steward_id == steward_id
@@ -30,17 +29,12 @@ def update_coherence(db: Session, steward_id: str) -> float:
     if not identity or not steward:
         return 0.0
 
-    if identity.triangulation_count < MIN_TRIANGULATIONS:
+    if identity.triangulation_count < MIN_PULSES:
         steward.coherence_score = 0.0
         db.commit()
         return 0.0
 
-    if identity.position_variance is None:
-        steward.coherence_score = 0.0
-        db.commit()
-        return 0.0
-
-    score = 1.0 / (1.0 + identity.position_variance)
+    score = coherence_score(identity.za, za_node)
     steward.coherence_score = round(score, 6)
     db.commit()
     return steward.coherence_score
