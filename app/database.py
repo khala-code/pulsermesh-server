@@ -14,6 +14,7 @@ class Base(DeclarativeBase):
 
 def init_db():
     from app.models import node, steward, pulse, identity  # noqa: F401
+    from app.models import peer, gossip_log               # noqa: F401
     Base.metadata.create_all(bind=engine)
 
 def get_db():
