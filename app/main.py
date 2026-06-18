@@ -3,8 +3,10 @@ from fastapi import FastAPI
 from app.database import engine, Base, SessionLocal
 from app.routers import stewards, pulses
 from app.routers.checkpoint import router as checkpoint_router
+from app.routers.gossip import router as gossip_router
 from app.models import steward, pulse, identity, checkpoint as checkpoint_model
 from app.models import domain_vector  # ensures table is created by metadata
+from app.models import peer, gossip_log  # noqa: F401  gossip tables
 
 Base.metadata.create_all(bind=engine)
 
@@ -44,3 +46,4 @@ def health():
 app.include_router(stewards.router, prefix="/stewards", tags=["stewards"])
 app.include_router(pulses.router, prefix="/pulses", tags=["pulses"])
 app.include_router(checkpoint_router, prefix="/checkpoint", tags=["checkpoint"])
+app.include_router(gossip_router, prefix="/gossip", tags=["gossip"])
