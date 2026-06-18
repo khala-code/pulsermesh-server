@@ -15,4 +15,5 @@ class StewardResponse(BaseModel):
     trust_resource: float
     coherence_score: float
     created_at: datetime
-    api_key_hash: Optional[str] = None
+    api_key: Optional[str] = None
+    mission_vector_za: Optional[float] = None
