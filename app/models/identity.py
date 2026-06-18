@@ -8,18 +8,48 @@ class OaZaTaIdentity(Base):
     The OaZaTa position of a steward, frozen at registration as the
     initial projection point on their zeta spiral.
 
-    oa (Omega)  - thickness/height of the critical line at this Ta
-    za (Zeta)   - mesh coupling / horizontal weighting
-    ta (Tau)    - proper time axis; generally increases
+    oa (Omega)  — thickness/amplitude of the orbit
+    za (Zeta)   — current phase angle; updated per checkpoint advance
+    ta (Tau)    — arc length along geodesic; monotonically increasing
 
-    position_variance - rolling variance of triangulated OaZaTa position
-                        across the last N checkpoints. Computed by the
-                        matrix service. Low variance = coherent spiral.
-                        Feeds directly into steward.coherence_score.
+    --- Snark / seed-structure fields ---
 
-    triangulation_count - number of checkpoint triangulations performed.
-                          Below a minimum threshold, coherence_score is
-                          not meaningful (too few observations).
+    mission_vector_za
+        Declared direction of travel, resolved from the steward's domain
+        cluster through the node's DomainVector table at registration.
+        May be updated voluntarily by the steward (re-declaration).
+        See docs/federation.md § 2.
+
+    null_centroid_za
+        Inferred axis of the steward's orbital curvature, computed from
+        their validated pulse history graph by snark.py.
+        Updated incrementally at each checkpoint advance.
+        This is the Za coordinate of the hole the steward's trajectory
+        is orbiting — orthogonal to their direction of travel.
+        None until MIN_PULSES validated pulses exist.
+
+    mission_delta
+        |mission_vector_za - null_centroid_za| (angular, wrapped to [0, π]).
+        The divergence between declared purpose and inferred trajectory.
+        Convergence → coherent identity.
+        Persistent divergence → genuine evolution or noise.
+        None until null_centroid_za is first computed.
+
+    pulse_count
+        Number of validated pulses. This is n in uncertainty_band(n, ta)
+        from asymptotic.py. Replaces triangulation_count for that purpose.
+
+    --- Deprecated fields (retained for migration safety) ---
+
+    position_variance
+        Previously: rolling variance of triangulated position.
+        Superseded by null_centroid_za + mission_delta.
+        Retained so existing rows do not break on upgrade.
+
+    triangulation_count
+        Previously: number of checkpoint triangulations.
+        Superseded by pulse_count.
+        Retained for migration safety.
     """
     __tablename__ = "oazata_identities"
 
@@ -29,6 +59,15 @@ class OaZaTaIdentity(Base):
     za = Column(Float, nullable=False)
     ta = Column(Float, nullable=False)
     api_key_hash = Column(String, nullable=False)
-    position_variance = Column(Float, default=None, nullable=True)  # None until enough data
+
+    # snark fields
+    mission_vector_za = Column(Float, nullable=True, default=None)
+    null_centroid_za = Column(Float, nullable=True, default=None)
+    mission_delta = Column(Float, nullable=True, default=None)
+    pulse_count = Column(Integer, default=0)
+
+    # deprecated — retained for migration safety
+    position_variance = Column(Float, default=None, nullable=True)
     triangulation_count = Column(Integer, default=0)
+
     created_at = Column(DateTime, default=datetime.utcnow)
