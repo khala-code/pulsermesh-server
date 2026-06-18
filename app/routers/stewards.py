@@ -1,9 +1,10 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.auth import require_api_key
+from app.auth import require_api_key, require_steward_key
 from app.database import get_db
 from app.models.steward import Steward
+from app.models.identity import OaZaTaIdentity
 from app.schemas.identity import StewardCreateWithPosition, OaZaTaPosition
 from app.services.identity import issue_identity, get_identity_by_steward
 from app.services.domain import resolve_mission_vector
@@ -29,7 +30,7 @@ def register_steward(
     (Oa=1.0, Za=0.0, Ta=0.0) -- the default entry point.
 
     Returns steward fields plus:
-      api_key         -- the plaintext pm_ key, returned once at registration only
+      api_key           -- the plaintext pm_ key, returned once at registration only
       mission_vector_za -- resolved from declared domains if provided
     """
     steward_id = str(uuid.uuid4())
@@ -99,24 +100,26 @@ def get_steward(
 def get_steward_identity(
     steward_id: str,
     db: Session = Depends(get_db),
-    api_key: str = Depends(require_api_key)
+    identity: OaZaTaIdentity = Depends(require_steward_key)
 ):
     """
     Return the OaZaTa identity and snark fields for a steward.
+
+    Accepts a steward pm_ key or the node admin key.
     """
-    identity = get_identity_by_steward(db, steward_id)
-    if not identity:
+    record = get_identity_by_steward(db, steward_id)
+    if not record:
         raise HTTPException(status_code=404, detail="Identity not found")
     return {
-        "id": identity.id,
-        "steward_id": identity.steward_id,
-        "oa": identity.oa,
-        "za": identity.za,
-        "ta": identity.ta,
-        "api_key_hash": identity.api_key_hash,
-        "mission_vector_za": identity.mission_vector_za,
-        "null_centroid_za": identity.null_centroid_za,
-        "mission_delta": identity.mission_delta,
-        "pulse_count": identity.pulse_count,
-        "created_at": identity.created_at,
+        "id": record.id,
+        "steward_id": record.steward_id,
+        "oa": record.oa,
+        "za": record.za,
+        "ta": record.ta,
+        "api_key_hash": record.api_key_hash,
+        "mission_vector_za": record.mission_vector_za,
+        "null_centroid_za": record.null_centroid_za,
+        "mission_delta": record.mission_delta,
+        "pulse_count": record.pulse_count,
+        "created_at": record.created_at,
     }
