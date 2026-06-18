@@ -22,11 +22,14 @@ def advance_checkpoint(db: Session, ta_ref: float) -> Checkpoint:
     """
     Advance the mesh clock by one checkpoint.
 
-    After committing the new Checkpoint row, calls
-    snark.update_snark_identity() for every steward that has an
-    OaZaTaIdentity. Snark failures are logged and skipped — a
-    centroid recomputation error must never prevent the checkpoint
-    from advancing.
+    After committing the new Checkpoint row:
+      1. Runs snark.update_snark_identity() for every steward that has an
+         OaZaTaIdentity. Snark failures are logged and skipped.
+      2. Runs gossip.emit_gossip() to broadcast the new checkpoint to all
+         registered peers. Gossip failures are logged and skipped.
+
+    Neither post-commit step can prevent the checkpoint from advancing.
+    Both use deferred imports to prevent circular dependencies.
     """
     current = get_current_checkpoint(db)
     new_index = current.index + 1
@@ -48,6 +51,7 @@ def advance_checkpoint(db: Session, ta_ref: float) -> Checkpoint:
     db.refresh(cp)
 
     _run_snark_updates(db)
+    _run_gossip_emit(db, cp)
 
     return cp
 
@@ -84,6 +88,43 @@ def _run_snark_updates(db: Session) -> None:
                 "snark update failed for steward=%s: %s",
                 identity.steward_id, exc,
             )
+
+
+def _run_gossip_emit(db: Session, cp: Checkpoint) -> None:
+    """
+    Broadcast the new checkpoint to all registered peers via gossip.
+
+    Steward (oa, za) pairs are snapshotted from OaZaTaIdentity at the
+    moment of the checkpoint advance — this is the same population the
+    snark step just updated, so the positions are fresh.
+
+    Deferred import mirrors _run_snark_updates to prevent any future
+    circular dependency if gossip ever imports from checkpoint.
+
+    Gossip delivery failures are swallowed here — emit_gossip() itself
+    never raises, but we guard with try/except anyway for belt-and-braces.
+    """
+    from app.services.gossip import emit_gossip  # deferred import
+
+    try:
+        identities = db.query(OaZaTaIdentity).all()
+        steward_positions = [(i.oa, i.za) for i in identities]
+
+        emit_gossip(
+            db=db,
+            checkpoint_index=cp.index,
+            checkpoint_hash=cp.hash,
+            ta_ref=cp.ta_ref,
+            steward_positions=steward_positions,
+        )
+        log.debug(
+            "gossip emitted: checkpoint=%d peers=%d stewards=%d",
+            cp.index,
+            db.query(__import__('app.models.peer', fromlist=['Peer']).Peer).count(),
+            len(steward_positions),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("gossip emit failed at checkpoint=%d: %s", cp.index, exc)
 
 
 def derive_steward_key(steward_id: str, oa: float, za: float, ta: float, checkpoint_hash: str) -> str:
